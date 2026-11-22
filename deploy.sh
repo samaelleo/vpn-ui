@@ -102,13 +102,15 @@ arch="$(uname -m)"
 [[ "$arch" == "x86_64" || "$arch" == "amd64" ]] || \
     warn "host architecture is '$arch' — this installs the amd64 build, which may not run here."
 
-# Fresh install vs in-place update: an already-installed binary means UPDATE. On
+# Fresh install vs in-place update: an already-installed binary or DB means UPDATE. On
 # update we must NOT re-randomize credentials (that would lock the operator out of
 # their own panel) and we snapshot the DB before the new binary can migrate it.
 MODE="install"; OLD_VER=""
-if [[ -e "$DEST" ]]; then
+if [[ -e "$DEST" || -f "$DB" ]]; then
     MODE="update"
-    OLD_VER="$("$DEST" -v 2>/dev/null | tr -d '[:space:]')"
+    if [[ -x "$DEST" ]]; then
+        OLD_VER="$("$DEST" -v 2>/dev/null | tr -d '[:space:]' || true)"
+    fi
 fi
 
 if   command -v curl >/dev/null 2>&1; then DL="curl"
