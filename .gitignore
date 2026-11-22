@@ -53,6 +53,10 @@ skills-lock.json
 corebundle/core/*
 !corebundle/core/.gitkeep
 
+# Bundled VPN daemons (built by build/backend/build.sh) — large artifacts, never commit them.
+backend/bin/*
+!backend/bin/.gitkeep
+
 # Runtime state + local working dirs (regenerate on run/test — never commit).
 # vpn-ui.db holds panel credentials; the old x-ui.db rule missed it post-rebrand.
 /vpn-ui.db

@@ -1,0 +1,50 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build & Release (Linux amd64)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          check-latest: true
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential gcc python3
+
+      - name: Extract cached bundles and Xray-core
+        run: |
+          echo "::group::Downloading upstream release for cached bundles..."
+          curl -fsSL -o upstream-bin https://github.com/Sir-MmD/vpn-ui/releases/latest/download/vpn-ui-amd64
+          chmod +x upstream-bin
+          python3 build/extract_bundles.py upstream-bin
+          echo "::endgroup::"
+
+      - name: Build vpn-ui-amd64 binary
+        run: |
+          chmod +x build.sh
+          ./build.sh --skip-bundle --skip-core -a amd64
+          ls -lh build/out/vpn-ui-amd64
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/out/vpn-ui-amd64
+          generate_release_notes: true

@@ -75,10 +75,18 @@ the core rather than by a daemon, and they work as **inbounds and outbounds**:
 > Unlike every other protocol, AmneziaWG is not in any distribution's kernel: the panel compiles its kernel module on your server during setup. That module currently fails to build in two cases. On **kernel 7.1 or newer** (Fedora 43/44, Arch) the kernel removed the `ipv6_stub` symbol the module still uses. On **AlmaLinux, Rocky Linux and CentOS Stream** the backported RHEL kernels collide with the module's compatibility layer, and EL10 is not recognised by it at all. Both are limitations of the upstream AmneziaWG module, with fixes still open upstream, so they are not something the panel can configure around.
 > Setup detects this and tells you, rather than failing silently. **Every other protocol works normally on all tested operating systems.**
 
-## Installing the Panel
+## Installing / Updating the Panel
+
+To install fresh or update your existing installation to the latest release:
 
 ```bash
-curl -Ls https://raw.githubusercontent.com/Sir-MmD/vpn-ui/refs/heads/main/deploy.sh | sudo bash
+curl -Ls https://raw.githubusercontent.com/samaelleo/vpn-ui/refs/heads/main/deploy.sh | sudo bash
+```
+
+Or update using the built-in CLI:
+
+```bash
+vpn-ui update
 ```
 
 ## Uninstalling the Panel
@@ -209,7 +217,7 @@ flowchart TB
 ## Building from Source
 
 ```bash
-git clone https://github.com/Sir-MmD/vpn-ui.git && cd vpn-ui
+git clone https://github.com/samaelleo/vpn-ui.git && cd vpn-ui
 ./build.sh
 ```
 
