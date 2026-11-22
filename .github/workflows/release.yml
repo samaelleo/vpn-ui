@@ -38,6 +38,10 @@ jobs:
           echo "::endgroup::"
 
       - name: Build vpn-ui-amd64 binary
+        env:
+          GOAMD64: v1
+          CGO_CFLAGS: -march=x86-64
+          CGO_LDFLAGS: -march=x86-64
         run: |
           chmod +x build.sh
           ./build.sh --skip-bundle --skip-core -a amd64

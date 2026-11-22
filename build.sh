@@ -288,7 +288,10 @@ if (( DRY_RUN )); then
     exit 0
 fi
 mkdir -p "$OUT_DIR"
-CGO_ENABLED=1 GOARCH="$ARCH" go build -o "$OUT_BIN" main.go
+export GOAMD64="${GOAMD64:-v1}"
+export CGO_CFLAGS="${CGO_CFLAGS:--march=x86-64}"
+export CGO_LDFLAGS="${CGO_LDFLAGS:--march=x86-64}"
+CGO_ENABLED=1 GOARCH="$ARCH" GOAMD64="$GOAMD64" go build -o "$OUT_BIN" main.go
 
 hr
 ok "done: ${_CB:-}$(ls -lh "$OUT_BIN" | awk '{print $5}')${_CR:-} -> ${_CB:-}build/out/vpn-ui-${ARCH}${_CR:-}"
