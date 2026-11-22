@@ -11,7 +11,7 @@ permissions:
 jobs:
   build:
     name: Build & Release (Linux amd64)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -40,12 +40,38 @@ jobs:
       - name: Build vpn-ui-amd64 binary
         env:
           GOAMD64: v1
-          CGO_CFLAGS: -march=x86-64
+          CGO_CFLAGS: -march=x86-64 -mtune=generic
           CGO_LDFLAGS: -march=x86-64
         run: |
           chmod +x build.sh
           ./build.sh --skip-bundle --skip-core -a amd64
           ls -lh build/out/vpn-ui-amd64
+
+      - name: Ensure baseline ISA level compatibility
+        run: |
+          python3 -c "
+          import struct
+
+          path = 'build/out/vpn-ui-amd64'
+          with open(path, 'rb') as f:
+              data = bytearray(f.read())
+
+          needle = b'\x02\x80\x00\xc0\x04\x00\x00\x00'
+          pos = data.find(needle)
+          if pos != -1:
+              val_offset = pos + len(needle)
+              old_val = struct.unpack('<I', data[val_offset:val_offset+4])[0]
+              print(f'Found GNU_PROPERTY_X86_ISA_1_NEEDED at {pos}: {hex(old_val)}')
+              if old_val > 1:
+                  data[val_offset:val_offset+4] = struct.pack('<I', 1)
+                  with open(path, 'wb') as f:
+                      f.write(data)
+                  print('Patched GNU_PROPERTY_X86_ISA_1_NEEDED to 0x1 (baseline)')
+              else:
+                  print('Already at baseline (0x1)')
+          else:
+              print('No GNU_PROPERTY_X86_ISA_1_NEEDED note found (baseline)')
+          "
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
