@@ -186,6 +186,7 @@ func Uninstall(opts UninstallOptions) *UninstallReport {
 		//    selectors it does not mention as wildcards, so it could take an
 		//    operator's `from <addr> fwmark 1 lookup 100` with it.
 		collapseVpnPolicyRules(true)
+		clearVpnIcmpRules()
 		if commandExists("ip") {
 			_ = exec.Command("ip", "route", "flush", "table", "100").Run()
 		}

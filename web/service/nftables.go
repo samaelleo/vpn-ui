@@ -456,9 +456,10 @@ func writeClientToClientRules(b *strings.Builder, subnets []string, enabled bool
 }
 
 // vpnNet is one enabled VPN inbound's client address space plus its inter-client
-// reachability toggles, used to build the cross-inbound rules. OpenVPN carries
-// both its UDP and TCP block CIDRs.
+// reachability toggles, used to build the cross-inbound and ICMP routing rules.
+// OpenVPN carries both its UDP and TCP block CIDRs.
 type vpnNet struct {
+	tag     string   // inbound.Tag for matching Xray inboundTag routing rules
 	subnets []string // CIDRs, e.g. "10.0.5.0/24"
 	c2c     bool     // Client to Client
 	cross   bool     // Cross Inbound (UI-gated behind Client to Client)
@@ -498,6 +499,10 @@ func writeCrossInboundRules(b *strings.Builder, nets []vpnNet) {
 // Accounting chains (<proto>_acct_in / <proto>_acct_out) are NEVER flushed: their dynamic
 // per-client rules survive across regenerations.
 func (s *NftService) ApplyNftRules() error {
+	return s.applyNftRulesWithXray(nil)
+}
+
+func (s *NftService) applyNftRulesWithXray(xrayCfg *xray.Config) error {
 	l2tp := L2tpService{}
 	pptp := PptpService{}
 	ovpn := OpenVpnService{}
@@ -549,6 +554,7 @@ func (s *NftService) ApplyNftRules() error {
 	if len(l2tpInbounds) == 0 && len(pptpInbounds) == 0 && len(ovpnInbounds) == 0 && len(ocservInbounds) == 0 && len(sstpInbounds) == 0 && len(ikev2Inbounds) == 0 && len(wgcInbounds) == 0 && len(awgInbounds) == 0 && len(greInbounds) == 0 {
 		s.runCmd("nft", "delete", "table", "ip", "vpn")
 		os.Remove(nftConfigFile)
+		clearVpnIcmpRules()
 		return nil
 	}
 
@@ -604,7 +610,7 @@ func (s *NftService) ApplyNftRules() error {
 		if err != nil {
 			continue
 		}
-		allNets = append(allNets, vpnNet{subnets: subnetCIDRs(l2tp.GetSubnetsForInbound(inbound)), c2c: st.ClientToClient, cross: st.CrossInbound})
+		allNets = append(allNets, vpnNet{tag: inbound.Tag, subnets: subnetCIDRs(l2tp.GetSubnetsForInbound(inbound)), c2c: st.ClientToClient, cross: st.CrossInbound})
 	}
 	for _, inbound := range pptpInbounds {
 		if !inbound.Enable {
@@ -614,7 +620,7 @@ func (s *NftService) ApplyNftRules() error {
 		if err != nil {
 			continue
 		}
-		allNets = append(allNets, vpnNet{subnets: subnetCIDRs(pptp.GetSubnetsForInbound(inbound)), c2c: st.ClientToClient, cross: st.CrossInbound})
+		allNets = append(allNets, vpnNet{tag: inbound.Tag, subnets: subnetCIDRs(pptp.GetSubnetsForInbound(inbound)), c2c: st.ClientToClient, cross: st.CrossInbound})
 	}
 	for _, inbound := range ovpnInbounds {
 		if !inbound.Enable {
@@ -624,7 +630,7 @@ func (s *NftService) ApplyNftRules() error {
 		if err != nil {
 			continue
 		}
-		allNets = append(allNets, vpnNet{subnets: ovpnCIDRs(inbound, st), c2c: st.ClientToClient, cross: st.CrossInbound})
+		allNets = append(allNets, vpnNet{tag: inbound.Tag, subnets: ovpnCIDRs(inbound, st), c2c: st.ClientToClient, cross: st.CrossInbound})
 	}
 	for _, inbound := range ocservInbounds {
 		if !inbound.Enable {
@@ -634,7 +640,7 @@ func (s *NftService) ApplyNftRules() error {
 		if err != nil {
 			continue
 		}
-		allNets = append(allNets, vpnNet{subnets: ocservCIDRs(inbound, st), c2c: st.ClientToClient, cross: st.CrossInbound})
+		allNets = append(allNets, vpnNet{tag: inbound.Tag, subnets: ocservCIDRs(inbound, st), c2c: st.ClientToClient, cross: st.CrossInbound})
 	}
 	for _, inbound := range sstpInbounds {
 		if !inbound.Enable {
@@ -644,7 +650,7 @@ func (s *NftService) ApplyNftRules() error {
 		if err != nil {
 			continue
 		}
-		allNets = append(allNets, vpnNet{subnets: subnetCIDRs(sstp.GetSubnetsForInbound(inbound)), c2c: st.ClientToClient, cross: st.CrossInbound})
+		allNets = append(allNets, vpnNet{tag: inbound.Tag, subnets: subnetCIDRs(sstp.GetSubnetsForInbound(inbound)), c2c: st.ClientToClient, cross: st.CrossInbound})
 	}
 	for _, inbound := range ikev2Inbounds {
 		if !inbound.Enable {
@@ -654,7 +660,7 @@ func (s *NftService) ApplyNftRules() error {
 		if err != nil {
 			continue
 		}
-		allNets = append(allNets, vpnNet{subnets: ikev2CIDRs(inbound, st), c2c: st.ClientToClient, cross: st.CrossInbound})
+		allNets = append(allNets, vpnNet{tag: inbound.Tag, subnets: ikev2CIDRs(inbound, st), c2c: st.ClientToClient, cross: st.CrossInbound})
 	}
 	for _, inbound := range wgcInbounds {
 		if !inbound.Enable {
@@ -664,7 +670,7 @@ func (s *NftService) ApplyNftRules() error {
 		if err != nil {
 			continue
 		}
-		allNets = append(allNets, vpnNet{subnets: wgcCIDRs(inbound, st), c2c: st.ClientToClient, cross: st.CrossInbound})
+		allNets = append(allNets, vpnNet{tag: inbound.Tag, subnets: wgcCIDRs(inbound, st), c2c: st.ClientToClient, cross: st.CrossInbound})
 	}
 	for _, inbound := range awgInbounds {
 		if !inbound.Enable {
@@ -674,7 +680,7 @@ func (s *NftService) ApplyNftRules() error {
 		if err != nil {
 			continue
 		}
-		allNets = append(allNets, vpnNet{subnets: awgCIDRs(inbound, st), c2c: st.ClientToClient, cross: st.CrossInbound})
+		allNets = append(allNets, vpnNet{tag: inbound.Tag, subnets: awgCIDRs(inbound, st), c2c: st.ClientToClient, cross: st.CrossInbound})
 	}
 	for _, inbound := range greInbounds {
 		if !inbound.Enable {
@@ -684,7 +690,7 @@ func (s *NftService) ApplyNftRules() error {
 		if err != nil {
 			continue
 		}
-		allNets = append(allNets, vpnNet{subnets: greCIDRs(inbound, st), c2c: st.ClientToClient, cross: st.CrossInbound})
+		allNets = append(allNets, vpnNet{tag: inbound.Tag, subnets: greCIDRs(inbound, st), c2c: st.ClientToClient, cross: st.CrossInbound})
 	}
 	writeCrossInboundRules(&b, allNets)
 
@@ -975,6 +981,12 @@ func (s *NftService) ApplyNftRules() error {
 		}
 	}
 
+	// ICMP outbound policy routing and SNAT/MASQUERADE (runs after
+	// cross-inbound, client-to-client, and TCP/UDP TPROXY rules).
+	icmpPlan := buildLiveIcmpPlan(allNets, xrayCfg)
+	writeIcmpPreroutingRules(&b, icmpPlan)
+	writeIcmpNatPostRules(&b, icmpPlan)
+
 	// GRE raw-vs-IPsec filter. Mirrors the L2TP gate above, on protocol 47 instead of
 	// UDP/1701: when IPsec is required and raw is not allowed, accept only protocol-47
 	// packets that arrived inside an ESP SA (`meta secpath exists`) and drop the rest.
@@ -1044,6 +1056,9 @@ func (s *NftService) ApplyNftRules() error {
 		}
 	}
 
+	// Ensure required ICMP fwmark ip rules exist before nft starts marking packets.
+	ensureVpnIcmpRules(icmpPlan.tables)
+
 	// Write and load atomically
 	if err := os.MkdirAll("/etc/vpn-ui", 0755); err != nil {
 		return err
@@ -1054,12 +1069,13 @@ func (s *NftService) ApplyNftRules() error {
 	if err := s.runCmd("nft", "-f", nftConfigFile); err != nil {
 		return fmt.Errorf("failed to load nft rules: %w", err)
 	}
+	reconcileVpnIcmpRules(icmpPlan.tables)
 
-	// Best-effort: drop the legacy OpenVPN NAT chain left by older versions that
-	// masqueraded OpenVPN straight to the internet. OpenVPN now routes via TPROXY,
-	// so the chain is obsolete. Both calls no-op once it's gone.
-	s.runCmd("nft", "flush", "chain", "ip", "vpn", "nat_post")
-	s.runCmd("nft", "delete", "chain", "ip", "vpn", "nat_post")
+	// Drop legacy/unused nat_post only when no active ICMP NAT rules are needed.
+	if !icmpPlan.needNat() {
+		s.runCmd("nft", "flush", "chain", "ip", "vpn", "nat_post")
+		s.runCmd("nft", "delete", "chain", "ip", "vpn", "nat_post")
+	}
 
 	// Best-effort: drop the pre-split combined "<proto>_acct" chains. The static chains
 	// were rebuilt above without their jumps, so on an upgraded box they linger holding

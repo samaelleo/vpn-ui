@@ -283,6 +283,7 @@ func (s *VpnOutboundService) InitVpnOutbound() {
 	// removes a steer rule left behind by a crash or pointing at a table number that a
 	// rebuilt device has since given up.
 	vpnOutApplyVia(all, vpnOutApplyCarriers(all, (&SshOutboundService{}).List()))
+	syncVpnIcmpNft()
 }
 
 // VpnOutSecrets is an OPTIONAL interface naming the settings keys that must never
@@ -536,6 +537,7 @@ func (s *VpnOutboundService) Save(cfg VpnOutboundConfig) (VpnOutboundConfig, err
 	// disabling a tunnel that carries two others has to remove their steer rules, and
 	// they are not in this call anywhere.
 	vpnOutApplyVia(out, vpnOutApplyCarriers(out, (&SshOutboundService{}).List()))
+	syncVpnIcmpNft()
 	// The freedom outbound fronting this tunnel is derived from the stored list when
 	// the config is built, so the core has to be rebuilt for the change to reach it.
 	(&XrayService{}).SetToNeedRestart()
@@ -580,6 +582,7 @@ func (s *VpnOutboundService) Delete(tag string) error {
 	// blackhole with it: without this pass the tunnels it carried would fall through to
 	// main and leave in the clear.
 	vpnOutApplyVia(out, vpnOutApplyCarriers(out, (&SshOutboundService{}).List()))
+	syncVpnIcmpNft()
 	(&XrayService{}).SetToNeedRestart()
 	return nil
 }
@@ -630,6 +633,7 @@ func (s *VpnOutboundService) StopAll() {
 			}
 		}
 	}
+	syncVpnIcmpNft()
 }
 
 // bringUp runs the driver and insists it names an interface. A driver that reports
@@ -878,6 +882,7 @@ func vpnOutUnbindEgress(iface string) {
 	// this function computes the table BEFORE sweeping rather than after.
 	table := vpnOutTableOf(iface)
 	vpnOutSweepRules(iface, table, 0)
+	vpnOutSweepIcmpRules(table)
 	if table != 0 {
 		vpnOutFlushTable(table)
 	}

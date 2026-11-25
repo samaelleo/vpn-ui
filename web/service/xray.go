@@ -822,6 +822,9 @@ func (s *XrayService) RestartXray(isForce bool) error {
 	// Re-asserted after every start, because that is exactly when the device has just
 	// come back up. Idempotent, and cheap enough: a restart is not a hot path.
 	vpnOutReassertCarriers()
+	if err := (&NftService{}).applyNftRulesWithXray(xrayConfig); err != nil {
+		logger.Warning("icmp routing: failed updating nft rules after Xray restart:", err)
+	}
 
 	return nil
 }
