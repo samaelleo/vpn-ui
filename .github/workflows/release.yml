@@ -37,6 +37,14 @@ jobs:
           python3 build/extract_bundles.py upstream-bin
           echo "::endgroup::"
 
+      - name: Stamp release version into config/version
+        run: |
+          ver="${GITHUB_REF_NAME#v}"
+          if [ -n "$ver" ]; then
+            printf '%s' "$ver" > config/version
+          fi
+          echo "Embedded panel version: $(cat config/version)"
+
       - name: Build vpn-ui-amd64 binary
         env:
           GOAMD64: v1
