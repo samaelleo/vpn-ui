@@ -204,6 +204,38 @@ flowchart TB
   ACCT -.- XRAY
 ```
 
+## تست پینگ و تاخیر واقعی با `curl` (به میلی‌ثانیه)
+
+برای اندازه‌گیری تاخیر واقعی **TCP**، **TLS** و **کل پاسخ (Total / TTFB)** بر حسب میلی‌ثانیه از طریق تانل یا پروکسی (به‌ویژه روی outboundهای غیر-ICMP مثل VLESS/VMess/Trojan یا مقایسه سرعت مسیرهای مختلف):
+
+### ویندوز (PowerShell)
+
+**تست ۴تایی:**
+
+```powershell
+$ic = [cultureinfo]::InvariantCulture; 1..4 | ForEach-Object { $t = (curl.exe -4 -o NUL -s --max-time 5 -w "%{http_code} %{time_connect} %{time_appconnect} %{time_starttransfer}" https://1.1.1.1) -split ' '; if ($t.Count -eq 4 -and $t[0] -ne '000') { "TCP: $([math]::Round([double]::Parse($t[1],$ic)*1000))ms | TLS: $([math]::Round([double]::Parse($t[2],$ic)*1000))ms | Total: $([math]::Round([double]::Parse($t[3],$ic)*1000))ms" } else { "Timeout / Failed" } }
+```
+
+**تست نامحدود (توقف با `Ctrl+C`):**
+
+```powershell
+$ic = [cultureinfo]::InvariantCulture; while ($true) { $t = (curl.exe -4 -o NUL -s --max-time 5 -w "%{http_code} %{time_connect} %{time_appconnect} %{time_starttransfer}" https://1.1.1.1) -split ' '; if ($t.Count -eq 4 -and $t[0] -ne '000') { "TCP: $([math]::Round([double]::Parse($t[1],$ic)*1000))ms | TLS: $([math]::Round([double]::Parse($t[2],$ic)*1000))ms | Total: $([math]::Round([double]::Parse($t[3],$ic)*1000))ms" } else { "Timeout / Failed" }; Start-Sleep -Seconds 1 }
+```
+
+### لینوکس / مک (`bash`)
+
+**تست ۴تایی:**
+
+```bash
+for i in 1 2 3 4; do curl -4 -o /dev/null -s --max-time 5 -w "%{http_code} %{time_connect} %{time_appconnect} %{time_starttransfer}\n" https://1.1.1.1 | awk '{if ($1 == "000" || NF < 4) print "Timeout / Failed"; else printf "TCP: %.0fms | TLS: %.0fms | Total: %.0fms\n", $2*1000, $3*1000, $4*1000}'; done
+```
+
+**تست نامحدود (توقف با `Ctrl+C`):**
+
+```bash
+while true; do curl -4 -o /dev/null -s --max-time 5 -w "%{http_code} %{time_connect} %{time_appconnect} %{time_starttransfer}\n" https://1.1.1.1 | awk '{if ($1 == "000" || NF < 4) print "Timeout / Failed"; else printf "TCP: %.0fms | TLS: %.0fms | Total: %.0fms\n", $2*1000, $3*1000, $4*1000}'; sleep 1; done
+```
+
 ## کامپایل از سورس
 
 ```bash
