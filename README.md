@@ -232,6 +232,20 @@ $ic = [cultureinfo]::InvariantCulture; 1..4 | ForEach-Object { $t = (curl.exe -4
 $ic = [cultureinfo]::InvariantCulture; while ($true) { $t = (curl.exe -4 -o NUL -s --max-time 5 -w "%{http_code} %{time_connect} %{time_appconnect} %{time_starttransfer}" https://1.1.1.1) -split ' '; if ($t.Count -eq 4 -and $t[0] -ne '000') { "TCP: $([math]::Round([double]::Parse($t[1],$ic)*1000))ms | TLS: $([math]::Round([double]::Parse($t[2],$ic)*1000))ms | Total: $([math]::Round([double]::Parse($t[3],$ic)*1000))ms" } else { "Timeout / Failed" }; Start-Sleep -Seconds 1 }
 ```
 
+### Windows (Command Prompt / CMD)
+
+**4 tests:**
+
+```cmd
+powershell -NoProfile -Command "$ic=[cultureinfo]::InvariantCulture; 1..4 | ForEach-Object { $t=(curl.exe -4 -o NUL -s --max-time 5 -w '%{http_code} %{time_connect} %{time_appconnect} %{time_starttransfer}' https://1.1.1.1) -split ' '; if($t.Count -eq 4 -and $t[0] -ne '000'){ 'TCP: '+[math]::Round([double]::Parse($t[1],$ic)*1000)+'ms | TLS: '+[math]::Round([double]::Parse($t[2],$ic)*1000)+'ms | Total: '+[math]::Round([double]::Parse($t[3],$ic)*1000)+'ms' } else { 'Timeout / Failed' } }"
+```
+
+**Continuous test (`Ctrl+C` to stop):**
+
+```cmd
+powershell -NoProfile -Command "$ic=[cultureinfo]::InvariantCulture; while($true){ $t=(curl.exe -4 -o NUL -s --max-time 5 -w '%{http_code} %{time_connect} %{time_appconnect} %{time_starttransfer}' https://1.1.1.1) -split ' '; if($t.Count -eq 4 -and $t[0] -ne '000'){ 'TCP: '+[math]::Round([double]::Parse($t[1],$ic)*1000)+'ms | TLS: '+[math]::Round([double]::Parse($t[2],$ic)*1000)+'ms | Total: '+[math]::Round([double]::Parse($t[3],$ic)*1000)+'ms' } else { 'Timeout / Failed' }; Start-Sleep -Seconds 1 }"
+```
+
 ### Linux / macOS (`bash`)
 
 **4 tests:**
