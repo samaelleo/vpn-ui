@@ -436,3 +436,25 @@ func fakeIptablesRunner(chains map[string][]string) func(args ...string) (string
 		}
 	}
 }
+
+func TestVpnNftPreroutingNeedsRecreate(t *testing.T) {
+	legacyJSON := []byte(`{"nftables":[{"metainfo":{"version":"1.1.6"}},{"chain":{"family":"ip","table":"vpn","name":"prerouting","handle":19,"type":"filter","hook":"prerouting","prio":-150,"policy":"accept"}}]}`)
+	if !vpnNftPreroutingNeedsRecreate(legacyJSON) {
+		t.Fatal("expected prio -150 prerouting chain to require recreate")
+	}
+
+	upgradedJSON := []byte(`{"nftables":[{"metainfo":{"version":"1.1.6"}},{"chain":{"family":"ip","table":"vpn","name":"prerouting","handle":19,"type":"filter","hook":"prerouting","prio":-145,"policy":"accept"}}]}`)
+	if vpnNftPreroutingNeedsRecreate(upgradedJSON) {
+		t.Fatal("expected prio -145 prerouting chain not to require recreate")
+	}
+
+	legacyText := []byte("table ip vpn {\n\tchain prerouting {\n\t\ttype filter hook prerouting priority mangle; policy accept;\n\t}\n}\n")
+	if !vpnNftPreroutingNeedsRecreate(legacyText) {
+		t.Fatal("expected text fallback 'priority mangle;' to require recreate")
+	}
+
+	upgradedText := []byte("table ip vpn {\n\tchain prerouting {\n\t\ttype filter hook prerouting priority mangle + 5; policy accept;\n\t}\n}\n")
+	if vpnNftPreroutingNeedsRecreate(upgradedText) {
+		t.Fatal("expected text fallback 'priority mangle + 5;' not to require recreate")
+	}
+}

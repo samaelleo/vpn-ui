@@ -574,7 +574,7 @@ func (s *NftService) applyNftRulesWithXray(xrayCfg *xray.Config) error {
 		b.WriteString(fmt.Sprintf("add chain ip vpn %s\n", p+"_acct_in"))
 		b.WriteString(fmt.Sprintf("add chain ip vpn %s\n", p+"_acct_out"))
 	}
-	b.WriteString("add chain ip vpn prerouting { type filter hook prerouting priority mangle; policy accept; }\n")
+	b.WriteString(fmt.Sprintf("add chain ip vpn prerouting { type filter hook prerouting priority %d; policy accept; }\n", vpnPreroutingPriority))
 	b.WriteString("add chain ip vpn postrouting { type filter hook postrouting priority mangle; policy accept; }\n")
 	b.WriteString("add chain ip vpn input { type filter hook input priority filter; policy accept; }\n")
 
@@ -1061,6 +1061,10 @@ func (s *NftService) applyNftRulesWithXray(xrayCfg *xray.Config) error {
 
 	// Ensure required ICMP fwmark ip rules exist before nft starts marking packets.
 	ensureVpnIcmpRules(icmpPlan.tables)
+	// Upgrade an older priority-mangle (-150) prerouting chain in place by
+	// dropping only the static prerouting chain (preserving *_acct_in counters)
+	// before nft -f recreates it at -145.
+	s.migrateVpnPreroutingPriority()
 
 	// Write and load atomically
 	if err := os.MkdirAll("/etc/vpn-ui", 0755); err != nil {
@@ -1091,6 +1095,46 @@ func (s *NftService) applyNftRulesWithXray(xrayCfg *xray.Config) error {
 
 	logger.Infof("nft: loaded VPN rules (%d L2TP, %d PPTP, %d OpenVPN inbounds)", len(l2tpInbounds), len(pptpInbounds), len(ovpnInbounds))
 	return nil
+}
+
+// vpnPreroutingPriority sits after standard mangle (-150) and before dstnat (-100)
+// so host iptables -t mangle PREROUTING rules (e.g. CONNMARK --restore-mark on
+// multi-WAN hosts) run first and cannot wipe vpn-ui's TPROXY/ICMP fwmarks.
+const vpnPreroutingPriority = -145
+
+func (s *NftService) migrateVpnPreroutingPriority() {
+	out, err := exec.Command("nft", "-j", "list", "chain", "ip", "vpn", "prerouting").Output()
+	if err != nil {
+		out, err = exec.Command("nft", "list", "chain", "ip", "vpn", "prerouting").Output()
+		if err != nil {
+			return
+		}
+	}
+	if !vpnNftPreroutingNeedsRecreate(out) {
+		return
+	}
+	s.runCmd("nft", "flush", "chain", "ip", "vpn", "prerouting")
+	s.runCmd("nft", "delete", "chain", "ip", "vpn", "prerouting")
+}
+
+func vpnNftPreroutingNeedsRecreate(raw []byte) bool {
+	var parsed struct {
+		Nftables []struct {
+			Chain *struct {
+				Name string `json:"name"`
+				Prio *int   `json:"prio"`
+			} `json:"chain"`
+		} `json:"nftables"`
+	}
+	if json.Unmarshal(raw, &parsed) == nil {
+		for _, item := range parsed.Nftables {
+			if item.Chain != nil && item.Chain.Name == "prerouting" && item.Chain.Prio != nil {
+				return *item.Chain.Prio != vpnPreroutingPriority
+			}
+		}
+		return false
+	}
+	return strings.Contains(string(raw), "priority mangle;")
 }
 
 // nftCounterOutput represents the JSON output of `nft -j reset counters`.
