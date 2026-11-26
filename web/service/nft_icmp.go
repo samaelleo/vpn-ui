@@ -4,8 +4,11 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"os/exec"
 	"sort"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/goccy/go-json"
 	"github.com/mhsanaei/3x-ui/v2/database"
@@ -886,4 +889,127 @@ func sortedUniqueInts(in []int) []int {
 		}
 	}
 	return out
+}
+
+const vpnIcmpForwardHealIntervalSec = 30
+
+// vpnIcmpForwardRules allow panel-routed VPN ICMP traffic to traverse hosts whose
+// iptables FORWARD policy is DROP/REJECT (such as Docker or UFW). Request
+// filtering still lives in ip vpn prerouting, so disallowed/proxy/down ICMP is
+// already dropped before filter/FORWARD runs; replies require ESTABLISHED,RELATED.
+var vpnIcmpForwardRules = [][]string{
+	{"-s", vpnAddrSpace, "-p", "icmp", "-j", "ACCEPT"},
+	{"-d", vpnAddrSpace, "-p", "icmp", "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"},
+}
+
+var (
+	lastIcmpForwardSync atomic.Int64
+	icmpHasIptables     = func() bool { return commandExists("iptables") }
+	icmpRunIptables     = func(args ...string) (string, error) {
+		out, err := exec.Command("iptables", append([]string{"-w", "2"}, args...)...).CombinedOutput()
+		return string(out), err
+	}
+)
+
+// ensureVpnHostForwarding inserts the two scoped ICMP ACCEPT rules at the top
+// of DOCKER-USER (when Docker hooks FORWARD -> DOCKER-USER) or directly in FORWARD
+// when its default policy is DROP/REJECT. Plain FORWARD ACCEPT hosts stay untouched.
+func ensureVpnHostForwarding() {
+	lastIcmpForwardSync.Store(time.Now().Unix())
+	chain := selectVpnIptablesForwardChain()
+	if chain == "" {
+		return
+	}
+	// Insert in reverse order at position 1 so rules end up as [1: -s, 2: -d].
+	for i := len(vpnIcmpForwardRules) - 1; i >= 0; i-- {
+		spec := vpnIcmpForwardRules[i]
+		if _, err := icmpRunIptables(append([]string{"-C", chain}, spec...)...); err == nil {
+			continue
+		}
+		if out, err := icmpRunIptables(append([]string{"-I", chain, "1"}, spec...)...); err != nil {
+			logger.Warningf("icmp forwarding: failed adding rule in %s: %v (%s)", chain, err, strings.TrimSpace(out))
+		}
+	}
+}
+
+// ensureVpnHostForwardingIfDue periodically re-verifies host FORWARD rules so a
+// Docker or firewall restart after panel boot self-heals automatically.
+func ensureVpnHostForwardingIfDue() {
+	now := time.Now().Unix()
+	last := lastIcmpForwardSync.Load()
+	if now-last < vpnIcmpForwardHealIntervalSec {
+		return
+	}
+	if !lastIcmpForwardSync.CompareAndSwap(last, now) {
+		return
+	}
+	ensureVpnHostForwarding()
+}
+
+// cleanupVpnHostForwarding removes panel-managed ICMP rules from DOCKER-USER
+// and FORWARD when no VPN inbounds remain or during --uninstall.
+func cleanupVpnHostForwarding() {
+	lastIcmpForwardSync.Store(0)
+	if !icmpHasIptables() {
+		return
+	}
+	for _, chain := range []string{"DOCKER-USER", "FORWARD"} {
+		if _, err := icmpRunIptables("-S", chain); err != nil {
+			continue
+		}
+		for _, spec := range vpnIcmpForwardRules {
+			for i := 0; i < 5; i++ {
+				if _, err := icmpRunIptables(append([]string{"-C", chain}, spec...)...); err != nil {
+					break
+				}
+				if _, err := icmpRunIptables(append([]string{"-D", chain}, spec...)...); err != nil {
+					break
+				}
+			}
+		}
+	}
+}
+
+func selectVpnIptablesForwardChain() string {
+	if !icmpHasIptables() {
+		return ""
+	}
+	fwdOut, err := icmpRunIptables("-S", "FORWARD")
+	if err != nil {
+		return ""
+	}
+	if hasJumpToChain(fwdOut, "DOCKER-USER") {
+		if _, err := icmpRunIptables("-S", "DOCKER-USER"); err == nil {
+			return "DOCKER-USER"
+		}
+	}
+	if hasForwardDropPolicy(fwdOut) {
+		return "FORWARD"
+	}
+	return ""
+}
+
+func hasJumpToChain(iptablesSaveOut, target string) bool {
+	for _, line := range strings.Split(iptablesSaveOut, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 4 || fields[0] != "-A" || fields[1] != "FORWARD" {
+			continue
+		}
+		for i := 2; i < len(fields)-1; i++ {
+			if fields[i] == "-j" && fields[i+1] == target {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func hasForwardDropPolicy(iptablesSaveOut string) bool {
+	for _, line := range strings.Split(iptablesSaveOut, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 3 && fields[0] == "-P" && fields[1] == "FORWARD" && (fields[2] == "DROP" || fields[2] == "REJECT") {
+			return true
+		}
+	}
+	return false
 }

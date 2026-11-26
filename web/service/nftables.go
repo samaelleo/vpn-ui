@@ -555,6 +555,7 @@ func (s *NftService) applyNftRulesWithXray(xrayCfg *xray.Config) error {
 		s.runCmd("nft", "delete", "table", "ip", "vpn")
 		os.Remove(nftConfigFile)
 		clearVpnIcmpRules()
+		cleanupVpnHostForwarding()
 		return nil
 	}
 
@@ -562,6 +563,8 @@ func (s *NftService) applyNftRulesWithXray(xrayCfg *xray.Config) error {
 	// silently drop the TPROXY'd data plane (the Fedora/RHEL "connects but no
 	// internet" failure). No-op on Debian/Ubuntu.
 	ensureVpnHostNetworking()
+	// Also permit panel-routed VPN ICMP through Docker/UFW FORWARD DROP hosts.
+	ensureVpnHostForwarding()
 
 	var b strings.Builder
 
@@ -1289,6 +1292,7 @@ func (s *NftService) CollectAndResetTraffic(byProto map[string]map[string]string
 	if err != nil {
 		return nil
 	}
+	ensureVpnHostForwardingIfDue()
 
 	var result nftCounterOutput
 	if err := json.Unmarshal(output, &result); err != nil {

@@ -292,3 +292,147 @@ func TestReconcileVpnIcmpRulesOwnership(t *testing.T) {
 		t.Fatalf("clearVpnIcmpRules touched non-panel rules, remaining=%d", len(live))
 	}
 }
+
+func TestVpnHostForwarding(t *testing.T) {
+	prevHas := icmpHasIptables
+	prevRun := icmpRunIptables
+	t.Cleanup(func() {
+		icmpHasIptables = prevHas
+		icmpRunIptables = prevRun
+		lastIcmpForwardSync.Store(0)
+	})
+	icmpHasIptables = func() bool { return true }
+
+	t.Run("docker host with FORWARD DROP installs ICMP rules at top of DOCKER-USER idempotently", func(t *testing.T) {
+		chains := map[string][]string{
+			"FORWARD": {
+				"-P FORWARD DROP",
+				"-A FORWARD -j DOCKER-USER",
+				"-A FORWARD -j DOCKER-FORWARD",
+			},
+			"DOCKER-USER": {
+				"-N DOCKER-USER",
+				"-A DOCKER-USER -j RETURN",
+			},
+		}
+		icmpRunIptables = fakeIptablesRunner(chains)
+
+		ensureVpnHostForwarding()
+		du := chains["DOCKER-USER"]
+		if len(du) != 4 {
+			t.Fatalf("expected 2 inserted rules + header/RETURN, got: %v", du)
+		}
+		if du[1] != "-A DOCKER-USER -s 10.0.0.0/12 -p icmp -j ACCEPT" ||
+			du[2] != "-A DOCKER-USER -d 10.0.0.0/12 -p icmp -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT" {
+			t.Fatalf("unexpected DOCKER-USER rule order: %v", du)
+		}
+
+		// Re-running must be a strict no-op without duplicates.
+		ensureVpnHostForwarding()
+		if len(chains["DOCKER-USER"]) != 4 {
+			t.Fatalf("expected idempotent DOCKER-USER, got duplicate rules: %v", chains["DOCKER-USER"])
+		}
+
+		cleanupVpnHostForwarding()
+		if len(chains["DOCKER-USER"]) != 2 {
+			t.Fatalf("cleanup left ICMP rules behind in DOCKER-USER: %v", chains["DOCKER-USER"])
+		}
+	})
+
+	t.Run("non-docker UFW/DROP host targets FORWARD directly", func(t *testing.T) {
+		chains := map[string][]string{
+			"FORWARD": {
+				"-P FORWARD DROP",
+				"-A FORWARD -j ufw-before-forward",
+			},
+		}
+		icmpRunIptables = fakeIptablesRunner(chains)
+
+		ensureVpnHostForwarding()
+		fwd := chains["FORWARD"]
+		if len(fwd) != 4 || fwd[1] != "-A FORWARD -s 10.0.0.0/12 -p icmp -j ACCEPT" {
+			t.Fatalf("expected FORWARD rules for non-docker DROP host, got: %v", fwd)
+		}
+
+		cleanupVpnHostForwarding()
+		if len(chains["FORWARD"]) != 2 {
+			t.Fatalf("cleanup left FORWARD rules behind: %v", chains["FORWARD"])
+		}
+	})
+
+	t.Run("plain FORWARD ACCEPT host without DOCKER-USER is left untouched", func(t *testing.T) {
+		chains := map[string][]string{
+			"FORWARD": {
+				"-P FORWARD ACCEPT",
+			},
+		}
+		icmpRunIptables = fakeIptablesRunner(chains)
+
+		ensureVpnHostForwarding()
+		if len(chains["FORWARD"]) != 1 {
+			t.Fatalf("plain host should not be modified, got: %v", chains["FORWARD"])
+		}
+	})
+}
+
+func fakeIptablesRunner(chains map[string][]string) func(args ...string) (string, error) {
+	return func(args ...string) (string, error) {
+		if len(args) < 2 {
+			return "", fmt.Errorf("short args: %v", args)
+		}
+		op, chain := args[0], args[1]
+		lines, exists := chains[chain]
+		switch op {
+		case "-S":
+			if !exists {
+				return "", fmt.Errorf("No chain/target/match by that name")
+			}
+			return strings.Join(lines, "\n") + "\n", nil
+		case "-C":
+			if !exists {
+				return "", fmt.Errorf("no chain")
+			}
+			want := "-A " + chain + " " + strings.Join(args[2:], " ")
+			for _, l := range lines {
+				if l == want {
+					return "", nil
+				}
+			}
+			return "", fmt.Errorf("rule does not exist")
+		case "-I":
+			if !exists {
+				return "", fmt.Errorf("no chain")
+			}
+			ruleArgs := args[2:]
+			pos := 1
+			if len(ruleArgs) > 0 && ruleArgs[0] == "1" {
+				ruleArgs = ruleArgs[1:]
+			}
+			line := "-A " + chain + " " + strings.Join(ruleArgs, " ")
+			insertAt := 0
+			for insertAt < len(lines) && (strings.HasPrefix(lines[insertAt], "-P ") || strings.HasPrefix(lines[insertAt], "-N ")) {
+				insertAt++
+			}
+			_ = pos
+			updated := append([]string{}, lines[:insertAt]...)
+			updated = append(updated, line)
+			updated = append(updated, lines[insertAt:]...)
+			chains[chain] = updated
+			return "", nil
+		case "-D":
+			if !exists {
+				return "", fmt.Errorf("no chain")
+			}
+			want := "-A " + chain + " " + strings.Join(args[2:], " ")
+			for i, l := range lines {
+				if l == want {
+					chains[chain] = append(lines[:i], lines[i+1:]...)
+					return "", nil
+				}
+			}
+			return "", fmt.Errorf("not found")
+		default:
+			return "", fmt.Errorf("unsupported op %s", op)
+		}
+	}
+}

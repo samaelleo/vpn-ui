@@ -161,6 +161,7 @@ func Uninstall(opts UninstallOptions) *UninstallReport {
 			_ = exec.Command("nft", "delete", "table", "ip", "vpn").Run()
 		}
 		(&NftService{}).CleanupLegacyIptables()
+		cleanupVpnHostForwarding()
 		if firewalldRunning() {
 			_ = exec.Command("firewall-cmd", "--zone=trusted", "--remove-source="+vpnAddrSpace).Run()
 			_ = exec.Command("firewall-cmd", "--permanent", "--zone=trusted", "--remove-source="+vpnAddrSpace).Run()
